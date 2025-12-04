@@ -1,0 +1,170 @@
+/**
+ * Donut Miner - DefiLlama Adapter
+ * 
+ * Reserve Currency Protocol on Base
+ * 
+ * Contract Addresses:
+ * - Donut Token: 0xAE4a37d554C6D6F3E398546d8566B25052e0169C
+ * - Miner (Treasury/Staking): 0xF69614F4Ee8D4D3879dd53d5A039eB3114C794F6
+ * - Multicall: 0x7a85CA4b4E15df2a7b927Fa56edb050d2399B34c
+ * - LP Pool: 0xD1DbB2E56533C55C3A637D13C53aeEf65c5D5703
+ * 
+ * Subgraph: https://thegraph.com/explorer/subgraphs/8LAXZsz9xTzGMH2HB1F78AkoXD9yvxm2epLGr48wDhrK
+ */
+
+const { sumTokens2 } = require("../helper/sumTokens");
+const { staking } = require("../helper/staking");
+
+// Contract addresses on Base
+const DONUT_TOKEN = "0xAE4a37d554C6D6F3E398546d8566B25052e0169C";
+const MINER_CONTRACT = "0xF69614F4Ee8D4D3879dd53d5A039eB3114C794F6";
+const LP_POOL = "0xD1DbB2E56533C55C3A637D13C53aeEf65c5D5703";
+
+// Subgraph URL for Base
+// Note: Adjust the URL format based on your actual subgraph deployment
+// TheGraph Studio format: https://api.studio.thegraph.com/query/[id]/[name]/[network]
+// Or hosted service: https://api.thegraph.com/subgraphs/name/[subgraph-name]
+const SUBGRAPH_URL = "https://api.studio.thegraph.com/query/8LAXZsz9xTzGMH2HB1F78AkoXD9yvxm2epLGr48wDhrK/donut-miner/base";
+
+// Treasury tokens to track
+// IMPORTANT: Add all token addresses that your treasury (Miner contract) holds
+// Common tokens on Base:
+// - WETH: 0x4200000000000000000000000000000000000006
+// - USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+// - DAI: 0x50c5725949A6F0c72E6C4a641F24049A917E0D69
+// 
+// To find your treasury tokens:
+// 1. Check your subgraph for treasury token data
+// 2. Query the Miner contract for token balances
+// 3. Check your protocol's frontend or documentation
+//
+// Add your specific tokens here:
+// Starting with LP pool token - add more tokens as you discover them
+const TREASURY_TOKENS = [
+  LP_POOL, // LP Pool token (0xD1DbB2E56533C55C3A637D13C53aeEf65c5D5703)
+  // Add more tokens here as you discover them:
+  // "0x4200000000000000000000000000000000000006", // WETH (if held in treasury)
+  // "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC (if held in treasury)
+  // "0x50c5725949A6F0c72E6C4a641F24049A917E0D69", // DAI (if held in treasury)
+];
+
+/**
+ * Fetch treasury assets from subgraph (optional)
+ * Uncomment and customize based on your subgraph schema if you want to use it
+ */
+/*
+const { query } = require("../helper/http");
+
+async function fetchTreasuryFromSubgraph(timestamp, block) {
+  try {
+    const graphQuery = `
+      query {
+        treasuries(where: { id: "${MINER_CONTRACT.toLowerCase()}" }) {
+          id
+          totalValueLockedUSD
+          tokens {
+            token {
+              id
+              symbol
+              decimals
+            }
+            balance
+            balanceUSD
+          }
+        }
+      }
+    `;
+
+    const response = await query(SUBGRAPH_URL, graphQuery);
+    
+    if (response?.data?.treasuries?.length > 0) {
+      const treasury = response.data.treasuries[0];
+      const balances = {};
+      
+      // Convert subgraph data to DefiLlama format
+      treasury.tokens.forEach(({ token, balance }) => {
+        balances[token.id] = balance;
+      });
+      
+      return balances;
+    }
+  } catch (error) {
+    console.error("Error fetching from subgraph:", error);
+  }
+  return {};
+}
+*/
+
+/**
+ * Main TVL function
+ * Calculates Total Value Locked by summing all assets in the treasury (Miner contract)
+ * 
+ * For Reserve Currency protocols, TVL typically includes:
+ * 1. All tokens held by the treasury (Miner contract)
+ * 2. LP tokens if held in treasury
+ * 
+ * @param {number} timestamp - Current timestamp
+ * @param {number} ethBlock - Ethereum block number (not used for Base)
+ * @param {Object} chainBlocks - Block numbers for each chain
+ * @returns {Promise<Object>} TVL data in format: { [tokenAddress]: balance }
+ */
+async function tvl(timestamp, ethBlock, chainBlocks) {
+  // Get token balances held by the Miner contract (treasury)
+  // For Reserve Currency protocols, TVL = sum of all assets in treasury
+  
+  // Option 1: Track specific tokens (recommended if you know which tokens are in treasury)
+  if (TREASURY_TOKENS.length > 0) {
+    return sumTokens2({
+      chain: "base",
+      tokens: TREASURY_TOKENS,
+      owner: MINER_CONTRACT,
+      block: chainBlocks.base,
+      resolveLP: true, // Resolve LP tokens to underlying assets
+    });
+  }
+  
+  // If TREASURY_TOKENS is empty, you need to either:
+  // 1. Add tokens to TREASURY_TOKENS array above, OR
+  // 2. Use the subgraph method below (uncomment and customize)
+  
+  // Option 2: Use subgraph if available
+  // Uncomment and customize if your subgraph tracks treasury tokens:
+  /*
+  return fetchTreasuryFromSubgraph(timestamp, chainBlocks.base);
+  */
+  
+  // If neither method is configured, return empty (adapter won't work)
+  // Make sure to populate TREASURY_TOKENS or implement subgraph query
+  console.warn("Warning: TREASURY_TOKENS array is empty. Please add token addresses or implement subgraph query.");
+  return {};
+}
+
+/**
+ * Staking TVL
+ * Tracks staked DONUT tokens in the Miner contract
+ * 
+ * @param {number} timestamp - Current timestamp
+ * @param {number} ethBlock - Ethereum block number (not used for Base)
+ * @param {Object} chainBlocks - Block numbers for each chain
+ * @returns {Promise<Object>} Staking TVL data
+ */
+async function stakingTvl(timestamp, ethBlock, chainBlocks) {
+  return staking(MINER_CONTRACT, DONUT_TOKEN, "base")(timestamp, ethBlock, chainBlocks);
+}
+
+module.exports = {
+  base: {
+    tvl,
+    staking: stakingTvl,
+  },
+  methodology: `
+    Donut Miner TVL is calculated by:
+    1. Summing all token balances held in the Miner contract (treasury)
+    2. Including LP token balances if held in treasury (resolved to underlying assets)
+    3. Staking TVL tracks DONUT tokens staked in the Miner contract
+    
+    The Miner contract (0xF69614F4Ee8D4D3879dd53d5A039eB3114C794F6) serves as both the treasury and staking contract.
+    All assets held by this contract are counted as TVL.
+  `,
+};
+
